@@ -47,6 +47,7 @@ class Cache {
     }
     this.limit = limit;
     this.materialize = null;
+    this.generateKey = null;
 
     if (source instanceof Cache)
       this._cloneCache(source);
@@ -56,16 +57,17 @@ class Cache {
 
   _cloneIterator(source) {
     for (let entry of source)
-      this.set(entry[0], entry[1]);
+      this._set(entry[0], entry[1]);
   }
 
   _cloneCache(source) {
     let link = source[_tail];
     while (link) {
-      this.set(link.key, link.value, link);
+      this._set(link.key, link.value, link);
       link = link.previous;
     }
     this.materialize = source.materialize;
+    this.generateKey = source.generateKey;
   }
 
 
@@ -126,7 +128,7 @@ class Cache {
   }
 
 
-  delete(key) {
+  _delete(key) {
     const link = this[_map].get(key);
     if (!link)
       return false;
@@ -138,6 +140,11 @@ class Cache {
     this[_cost] = this[_cost] - link.cost;
 
     return true;
+  }
+
+  delete(keyObject){
+    const key = this._generateKey(keyObject);
+    return this._delete(key);
   }
 
 
@@ -152,20 +159,23 @@ class Cache {
       if (this[_cost] <= limit)
         break;
       if (hasExpired(link))
-        this.delete(link.key);
+        this._delete(link.key);
     }
 
     // Remove from the tail is potentiall O(N), we in practice we usually evict
     // as many entries as we add, so evict is O(1) spread over time
     while (this.size && this[_cost] > limit) {
       const leastRecent = this[_tail];
-      this.delete(leastRecent.key);
+      this._delete(leastRecent.key);
     }
   }
 
-
+  _generateKey(keyObj){
+    return this.generateKey&&this.generateKey(keyObj)||keyObj;
+  }
   // Returns the key value if set and not evicted yet.
-  get(key) {
+  get(keyObj) {
+    const key = this._generateKey(keyObj);
     const link = this[_map].get(key);
     // Although we do have the value, the contract is that we don't return
     // expired values
@@ -173,7 +183,7 @@ class Cache {
       this._moveLinkToHead(link);
       return link.value;
     } else if (this.materialize)
-      return this._materializeAndCache(key);
+      return this._materializeAndCache(key,keyObj);
     else
       return undefined;
   }
@@ -193,24 +203,25 @@ class Cache {
   }
 
 
-  _materializeAndCache(key) {
+  _materializeAndCache(key,objKey) {
     const self    = this;
-    const promise = Promise.resolve(key).then(this.materialize);
+    const promise = Promise.resolve(objKey).then(this.materialize);
 
     function deleteIfRejected() {
       const entry = self[_map].get(key);
       if (entry && entry.value === promise)
-        self.delete(key);
+        self._delete(key);
     }
 
-    this.set(key, promise);
+    this._set(key, promise);
     promise.catch(deleteIfRejected);
     return promise;
   }
 
 
   // Returns true if key has been set and not evicted yet.
-  has(key) {
+  has(keyObj) {
+    const key = this._generateKey(keyObj);
     const link = this[_map].get(key);
     if (!link)
       return false;
@@ -223,7 +234,7 @@ class Cache {
     while (link) {
       // We take this opportunity to get rid of expired keys
       if (hasExpired(link))
-        this.delete(link.key);
+        this._delete(link.key);
       else
         yield [link.key, link.value];
       link = link.next;
@@ -231,21 +242,19 @@ class Cache {
   }
 
   *values() {
-    // This could be `let [key] of` in future version
-    for (let entry of this.entries())
-      yield entry[1];
+    for (let [key,value] of this.entries())
+      yield value;
   }
 
   *keys() {
-    // This could be `let [key, value] of` in future version
-    for (let entry of this.entries())
-      yield entry[0];
+    for (let [key] of this.entries())
+      yield key;
   }
 
   forEach(callback, thisArg) {
     // This could be `let [key, value] of` in future version
-    for (let entry of this.entries())
-      callback.call(thisArg, entry[1], entry[0], this);
+    for (let [key,value] of this.entries())
+      callback.call(thisArg, value, key, this);
   }
 
 
@@ -261,13 +270,13 @@ class Cache {
   //
   // The following two are equivalent:
   //
-  //   set(key, value)
-  //   set(key, value, { cost: 1, ttl: Infinity })
-  set(key, value, options) {
+  //   _set(key, value)
+  //   _set(key, value, { cost: 1, ttl: Infinity })
+  _set(key, value, options) {
     const cost      = actualCost(options && options.cost);
     const expires   = ttlToExpires(options && options.ttl);
 
-    this.delete(key);
+    this._delete(key);
 
     // If TTL is zero we're never going to return this key, we don't want to
     // evict older keys either
@@ -312,6 +321,10 @@ class Cache {
     return this;
   }
 
+  set(keyObject,value,options){
+    const key = this._generateKey(keyObject);
+    return this._set(key,value,options);
+  }
 
   // Util.inspect(cache) calls this, and Node's console.log uses inspect
   inspect(depth, inspectOptions) {

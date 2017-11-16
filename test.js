@@ -894,3 +894,131 @@ describe('With materialize function', function() {
   });
 
 });
+
+
+describe('With materialize function using key object', function() {
+
+    let cache;
+    let resolved;
+
+    before(function() {
+        cache = new Cache();
+        cache.materialize = function(key) {
+            return `${key.a.toUpperCase()}${key.b.toUpperCase()}`;
+        };
+        cache.generateKey = function(keyObject){
+          return `${keyObject.a}.${keyObject.b}`;
+        }
+    });
+
+    before(function() {
+        resolved = cache.get({a:'x',b:'y'});
+        return resolved;
+    });
+
+    it('should resolve to materialized value', function() {
+        return resolved
+            .then(function(value) {
+                assert.equal(value, 'XY');
+            });
+    });
+
+    it('should have size of 1', function() {
+        assert.equal( cache.size, 1 );
+    });
+
+    it('should have cost of 1', function() {
+        assert.equal( cache.size, 1 );
+    });
+
+    it('should have new key', function() {
+        assert(cache.has({a:'x',b:'y'}));
+    });
+
+
+    describe('get again', function() {
+        it('should return same value', function() {
+            const again = cache.get({a:'x',b:'y'});
+            assert.equal(again, resolved);
+        });
+    });
+
+    describe('unable to resolve', function() {
+
+        let rejected;
+
+        before(function() {
+            cache.clear();
+            cache.materialize = function() {
+                throw new Error('fail');
+            };
+            rejected = cache.get({a:'y'});
+        });
+
+        it('should reject the get', function() {
+            return rejected.then(function() {
+                throw new Error('Not expected to arrive here');
+            }, function() {
+                // Not an error
+            });
+        });
+
+        it('should still have size of 0', function() {
+            assert.equal( cache.size, 0 );
+        });
+
+        it('should still have cost of 0', function() {
+            assert.equal( cache.size, 0 );
+        });
+
+        it('should not have new key', function() {
+            assert.equal( cache.has({a:'y'}), false);
+        });
+
+    });
+
+    describe('materialize and set', function() {
+
+        let promise;
+
+        before(function() {
+            cache.clear();
+            cache.materialize = function(keyObject) {
+                const lazy = Promise.resolve('ZZZ');
+                lazy.then(function() {
+                    cache.set(keyObject, lazy, { cost: 5 });
+                });
+                return lazy;
+            };
+            promise = cache.get({a:'z'});
+        });
+
+        it('should retrieve returned value', function() {
+            return promise
+                .then(function(value) {
+                    assert.equal(value, 'ZZZ');
+                });
+        });
+
+        it('should have size of 1', function() {
+            assert.equal( cache.size, 1 );
+        });
+
+        it('should have cost of 5', function() {
+            assert.equal( cache.cost, 5 );
+        });
+
+        it('should have key', function() {
+            assert( cache.get({a:'z'}) );
+        });
+
+        it('should keep returning value', function() {
+            return cache.get({a:'z'})
+                .then(function(value) {
+                    assert.equal(value, 'ZZZ');
+                });
+        });
+
+    });
+
+});
