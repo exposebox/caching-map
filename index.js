@@ -257,7 +257,7 @@ class Cache {
 
     // TTL (milliseconds) to expiration (timestamp)
     ttlToExpires(ttl) {
-        return Number.isInteger(ttl) ? Date.now() + ttl : this.ttl;
+        return Number.isInteger(ttl) ? Date.now() + ttl : Date.now() + this.ttl;
     }
 
     // Stores the key and value.
